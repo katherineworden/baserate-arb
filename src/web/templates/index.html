@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Base Rate Arbitrage Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        .sort-asc::after { content: ' ▲'; }
+        .sort-desc::after { content: ' ▼'; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+    <div x-data="app()" x-init="init()" class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-blue-400">Base Rate Arbitrage Scanner</h1>
+            <p class="text-gray-400 mt-2">
+                Markets: <span class="text-green-400">{{ market_count }}</span> |
+                With Base Rates: <span class="text-green-400">{{ base_rate_count }}</span>
+            </p>
+        </header>
+
+        <!-- Controls -->
+        <div class="bg-gray-800 rounded-lg p-4 mb-6">
+            <div class="flex flex-wrap gap-4 items-center">
+                <!-- Data Fetch Buttons -->
+                <div class="flex gap-2">
+                    <button @click="fetchKalshi()"
+                            :disabled="taskRunning"
+                            class="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 px-4 py-2 rounded font-medium">
+                        Fetch Kalshi
+                    </button>
+                    <button @click="fetchPolymarket()"
+                            :disabled="taskRunning"
+                            class="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 px-4 py-2 rounded font-medium">
+                        Fetch Polymarket
+                    </button>
+                </div>
+
+                <!-- Base Rate Buttons -->
+                <div class="flex gap-2">
+                    <button @click="researchBatch()"
+                            :disabled="taskRunning"
+                            class="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 px-4 py-2 rounded font-medium">
+                        Update Base Rates (LLM)
+                    </button>
+                    <button @click="loadOpportunities()"
+                            :disabled="taskRunning"
+                            class="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 px-4 py-2 rounded font-medium">
+                        Refresh Table
+                    </button>
+                </div>
+
+                <!-- Task Status -->
+                <div x-show="taskRunning" class="flex items-center gap-2 ml-auto">
+                    <div class="animate-spin rounded-full h-4 w-4 border-2 border-blue-400 border-t-transparent"></div>
+                    <span class="text-sm text-gray-300" x-text="taskMessage"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="bg-gray-800 rounded-lg p-4 mb-6">
+            <h2 class="text-lg font-semibold mb-3 text-gray-300">Filters</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Min Edge %</label>
+                    <input type="number" x-model.number="filters.minEdge" step="0.5"
+                           class="w-full bg-gray-700 rounded px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Min EV</label>
+                    <input type="number" x-model.number="filters.minEV" step="0.01"
+                           class="w-full bg-gray-700 rounded px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Min Quantity</label>
+                    <input type="number" x-model.number="filters.minQuantity" step="100"
+                           class="w-full bg-gray-700 rounded px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Min Kelly %</label>
+                    <input type="number" x-model.number="filters.minKelly" step="0.1"
+                           class="w-full bg-gray-700 rounded px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Max Kelly %</label>
+                    <input type="number" x-model.number="filters.maxKelly" step="1"
+                           class="w-full bg-gray-700 rounded px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Platform</label>
+                    <select x-model="filters.platform"
+                            class="w-full bg-gray-700 rounded px-3 py-2 text-sm">
+                        <option value="">All</option>
+                        <option value="kalshi">Kalshi</option>
+                        <option value="polymarket">Polymarket</option>
+                    </select>
+                </div>
+            </div>
+            <div class="mt-3">
+                <button @click="applyFilters()"
+                        class="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded text-sm font-medium">
+                    Apply Filters
+                </button>
+                <button @click="resetFilters()"
+                        class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded text-sm font-medium ml-2">
+                    Reset
+                </button>
+            </div>
+        </div>
+
+        <!-- Stats Summary -->
+        <div x-show="stats.count > 0" class="bg-gray-800 rounded-lg p-4 mb-6">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+                <div>
+                    <div class="text-2xl font-bold text-blue-400" x-text="stats.count"></div>
+                    <div class="text-sm text-gray-400">Opportunities</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-green-400" x-text="(stats.avg_edge * 100).toFixed(1) + '%'"></div>
+                    <div class="text-sm text-gray-400">Avg Edge</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-yellow-400" x-text="stats.avg_ev?.toFixed(2) + 'x'"></div>
+                    <div class="text-sm text-gray-400">Avg EV</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-purple-400" x-text="(stats.avg_kelly * 100).toFixed(1) + '%'"></div>
+                    <div class="text-sm text-gray-400">Avg Kelly</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-red-400" x-text="stats.total_quantity?.toLocaleString()"></div>
+                    <div class="text-sm text-gray-400">Total Qty</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Opportunities Table -->
+        <div class="bg-gray-800 rounded-lg overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-700">
+                        <tr>
+                            <th @click="sortBy('title')" class="px-4 py-3 text-left cursor-pointer hover:bg-gray-600"
+                                :class="{'sort-asc': sortColumn === 'title' && !sortDesc, 'sort-desc': sortColumn === 'title' && sortDesc}">
+                                Market
+                            </th>
+                            <th @click="sortBy('platform')" class="px-4 py-3 text-left cursor-pointer hover:bg-gray-600"
+                                :class="{'sort-asc': sortColumn === 'platform' && !sortDesc, 'sort-desc': sortColumn === 'platform' && sortDesc}">
+                                Platform
+                            </th>
+                            <th @click="sortBy('side')" class="px-4 py-3 text-center cursor-pointer hover:bg-gray-600"
+                                :class="{'sort-asc': sortColumn === 'side' && !sortDesc, 'sort-desc': sortColumn === 'side' && sortDesc}">
+                                Side
+                            </th>
+                            <th @click="sortBy('fair_probability')" class="px-4 py-3 text-right cursor-pointer hover:bg-gray-600"
+                                :class="{'sort-asc': sortColumn === 'fair_probability' && !sortDesc, 'sort-desc': sortColumn === 'fair_probability' && sortDesc}">
+                                Fair %
+                            </th>
+                            <th @click="sortBy('market_probability')" class="px-4 py-3 text-right cursor-pointer hover:bg-gray-600"
+                                :class="{'sort-asc': sortColumn === 'market_probability' && !sortDesc, 'sort-desc': sortColumn === 'market_probability' && sortDesc}">
+                                Market %
+                            </th>
+                            <th @click="sortBy('edge')" class="px-4 py-3 text-right cursor-pointer hover:bg-gray-600"
+                                :class="{'sort-asc': sortColumn === 'edge' && !sortDesc, 'sort-desc': sortColumn === 'edge' && sortDesc}">
+                                Edge
+                            </th>
+                            <th @click="sortBy('expected_value')" class="px-4 py-3 text-right cursor-pointer hover:bg-gray-600"
+                                :class="{'sort-asc': sortColumn === 'expected_value' && !sortDesc, 'sort-desc': sortColumn === 'expected_value' && sortDesc}">
+                                EV
+                            </th>
+                            <th @click="sortBy('kelly_fraction')" class="px-4 py-3 text-right cursor-pointer hover:bg-gray-600"
+                                :class="{'sort-asc': sortColumn === 'kelly_fraction' && !sortDesc, 'sort-desc': sortColumn === 'kelly_fraction' && sortDesc}">
+                                Kelly %
+                            </th>
+                            <th @click="sortBy('recommended_price')" class="px-4 py-3 text-right cursor-pointer hover:bg-gray-600"
+                                :class="{'sort-asc': sortColumn === 'recommended_price' && !sortDesc, 'sort-desc': sortColumn === 'recommended_price' && sortDesc}">
+                                Price
+                            </th>
+                            <th @click="sortBy('available_quantity')" class="px-4 py-3 text-right cursor-pointer hover:bg-gray-600"
+                                :class="{'sort-asc': sortColumn === 'available_quantity' && !sortDesc, 'sort-desc': sortColumn === 'available_quantity' && sortDesc}">
+                                Qty
+                            </th>
+                            <th class="px-4 py-3 text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="opp in sortedOpportunities" :key="opp.market_id + opp.side">
+                            <tr class="border-t border-gray-700 hover:bg-gray-750">
+                                <td class="px-4 py-3">
+                                    <a :href="opp.url" target="_blank" class="text-blue-400 hover:underline"
+                                       x-text="opp.title.substring(0, 60) + (opp.title.length > 60 ? '...' : '')"></a>
+                                    <div class="text-xs text-gray-500" x-text="'Expires: ' + new Date(opp.resolution_date).toLocaleDateString()"></div>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span class="px-2 py-1 rounded text-xs font-medium"
+                                          :class="opp.platform === 'kalshi' ? 'bg-blue-900 text-blue-300' : 'bg-purple-900 text-purple-300'"
+                                          x-text="opp.platform"></span>
+                                </td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="px-2 py-1 rounded text-xs font-medium"
+                                          :class="opp.side === 'YES' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'"
+                                          x-text="opp.side"></span>
+                                </td>
+                                <td class="px-4 py-3 text-right font-mono" x-text="opp.fair_probability.toFixed(1) + '%'"></td>
+                                <td class="px-4 py-3 text-right font-mono" x-text="opp.market_probability.toFixed(1) + '%'"></td>
+                                <td class="px-4 py-3 text-right font-mono"
+                                    :class="opp.edge > 5 ? 'text-green-400' : (opp.edge > 2 ? 'text-yellow-400' : 'text-gray-400')"
+                                    x-text="opp.edge.toFixed(1) + '%'"></td>
+                                <td class="px-4 py-3 text-right font-mono font-bold"
+                                    :class="opp.expected_value > 1.2 ? 'text-green-400' : (opp.expected_value > 1.1 ? 'text-yellow-400' : 'text-gray-400')"
+                                    x-text="opp.expected_value.toFixed(2) + 'x'"></td>
+                                <td class="px-4 py-3 text-right font-mono" x-text="opp.kelly_fraction.toFixed(1) + '%'"></td>
+                                <td class="px-4 py-3 text-right font-mono" x-text="'¢' + opp.recommended_price.toFixed(0)"></td>
+                                <td class="px-4 py-3 text-right font-mono" x-text="opp.available_quantity.toLocaleString()"></td>
+                                <td class="px-4 py-3 text-center">
+                                    <button @click="researchSingle(opp.market_id)"
+                                            class="text-blue-400 hover:text-blue-300 text-xs">
+                                        Update BR
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="opportunities.length === 0">
+                            <td colspan="11" class="px-4 py-8 text-center text-gray-500">
+                                No opportunities found. Try fetching markets or adjusting filters.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="mt-8 text-center text-gray-500 text-sm">
+            <p>Base Rate Arbitrage Scanner | Use at your own risk</p>
+        </footer>
+    </div>
+
+    <script>
+        function app() {
+            return {
+                opportunities: [],
+                stats: {},
+                filters: {
+                    minEdge: 2,
+                    minEV: 1.05,
+                    minQuantity: 100,
+                    minKelly: 0.1,
+                    maxKelly: 100,
+                    platform: ''
+                },
+                sortColumn: 'expected_value',
+                sortDesc: true,
+                taskRunning: false,
+                taskMessage: '',
+
+                async init() {
+                    await this.loadOpportunities();
+                    this.pollTaskStatus();
+                },
+
+                async loadOpportunities() {
+                    const params = new URLSearchParams({
+                        min_edge: this.filters.minEdge / 100,
+                        min_ev: this.filters.minEV,
+                        min_quantity: this.filters.minQuantity,
+                        min_kelly: this.filters.minKelly / 100,
+                        max_kelly: this.filters.maxKelly / 100,
+                        sort_by: this.sortColumn,
+                        sort_desc: this.sortDesc
+                    });
+                    if (this.filters.platform) {
+                        params.set('platforms', this.filters.platform);
+                    }
+
+                    const resp = await fetch(`/api/opportunities?${params}`);
+                    const data = await resp.json();
+                    this.opportunities = data.opportunities;
+                    this.stats = data.stats;
+                },
+
+                get sortedOpportunities() {
+                    return [...this.opportunities].sort((a, b) => {
+                        let aVal = a[this.sortColumn];
+                        let bVal = b[this.sortColumn];
+                        if (typeof aVal === 'string') {
+                            aVal = aVal.toLowerCase();
+                            bVal = bVal.toLowerCase();
+                        }
+                        if (this.sortDesc) {
+                            return bVal > aVal ? 1 : -1;
+                        }
+                        return aVal > bVal ? 1 : -1;
+                    });
+                },
+
+                sortBy(column) {
+                    if (this.sortColumn === column) {
+                        this.sortDesc = !this.sortDesc;
+                    } else {
+                        this.sortColumn = column;
+                        this.sortDesc = true;
+                    }
+                },
+
+                applyFilters() {
+                    this.loadOpportunities();
+                },
+
+                resetFilters() {
+                    this.filters = {
+                        minEdge: 2,
+                        minEV: 1.05,
+                        minQuantity: 100,
+                        minKelly: 0.1,
+                        maxKelly: 100,
+                        platform: ''
+                    };
+                    this.loadOpportunities();
+                },
+
+                async fetchKalshi() {
+                    await fetch('/api/fetch/kalshi', { method: 'POST' });
+                    this.taskRunning = true;
+                },
+
+                async fetchPolymarket() {
+                    await fetch('/api/fetch/polymarket', { method: 'POST' });
+                    this.taskRunning = true;
+                },
+
+                async researchBatch() {
+                    await fetch('/api/research/batch?limit=20', { method: 'POST' });
+                    this.taskRunning = true;
+                },
+
+                async researchSingle(marketId) {
+                    await fetch(`/api/research/base_rate/${marketId}`, { method: 'POST' });
+                    this.taskRunning = true;
+                },
+
+                async pollTaskStatus() {
+                    setInterval(async () => {
+                        const resp = await fetch('/api/task/status');
+                        const status = await resp.json();
+                        this.taskRunning = status.running;
+                        this.taskMessage = status.message;
+
+                        if (!status.running && status.progress === 100) {
+                            this.loadOpportunities();
+                        }
+                    }, 2000);
+                }
+            };
+        }
+    </script>
+</body>
+</html>

@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Optional
 import json
+import re
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -10,6 +11,60 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from src.models.market import (
     Market, Platform, MarketOrderBook, OrderBookLevel
 )
+
+
+# Category mappings for better filtering
+# Polymarket uses tags/groupItemTitle, we map these to standard categories
+CATEGORY_MAPPINGS = {
+    # Politics
+    "politics": ["politics", "election", "president", "congress", "senate", "governor", "mayor", "vote", "ballot", "democratic", "republican", "trump", "biden"],
+    "us_politics": ["us politics", "united states", "america", "federal", "white house", "congress", "senate", "house of representatives"],
+    "elections": ["election", "presidential", "midterm", "primary", "caucus", "vote", "ballot", "electoral"],
+
+    # Economics & Markets
+    "economics": ["economics", "economy", "gdp", "inflation", "fed", "federal reserve", "interest rate", "unemployment", "recession"],
+    "crypto": ["crypto", "bitcoin", "ethereum", "btc", "eth", "cryptocurrency", "blockchain", "token", "defi", "nft"],
+    "finance": ["finance", "stock", "market", "s&p", "nasdaq", "dow", "trading", "investment"],
+
+    # Sports
+    "sports": ["sports", "game", "match", "championship", "playoff", "tournament", "league"],
+    "nfl": ["nfl", "football", "super bowl", "touchdown", "quarterback", "chiefs", "eagles", "cowboys"],
+    "nba": ["nba", "basketball", "lakers", "celtics", "warriors", "playoffs"],
+    "mlb": ["mlb", "baseball", "world series", "home run"],
+    "soccer": ["soccer", "football", "premier league", "champions league", "world cup", "mls"],
+    "mma": ["mma", "ufc", "fighting", "knockout", "submission"],
+
+    # Entertainment
+    "entertainment": ["entertainment", "movie", "film", "tv", "show", "celebrity", "actor", "actress", "award", "oscar", "emmy", "grammy"],
+    "music": ["music", "album", "song", "artist", "billboard", "grammy", "concert"],
+
+    # Science & Tech
+    "tech": ["tech", "technology", "ai", "artificial intelligence", "software", "startup", "silicon valley", "google", "apple", "microsoft", "meta", "amazon"],
+    "science": ["science", "research", "study", "discovery", "space", "nasa", "climate", "health"],
+    "ai": ["ai", "artificial intelligence", "machine learning", "gpt", "openai", "anthropic", "claude", "chatgpt", "llm"],
+
+    # Weather
+    "weather": ["weather", "temperature", "rain", "snow", "storm", "hurricane", "tornado", "climate"],
+
+    # World Events
+    "world": ["world", "international", "global", "foreign", "war", "conflict", "treaty"],
+    "geopolitics": ["geopolitics", "china", "russia", "ukraine", "europe", "asia", "middle east", "nato"],
+
+    # Pop Culture
+    "pop_culture": ["pop culture", "viral", "trend", "meme", "social media", "twitter", "tiktok", "instagram"],
+}
+
+# Tags that indicate markets NOT suitable for base rate analysis
+NON_BASE_RATE_TAGS = [
+    "will", "who will", "what will", "which", "when will",
+    "predict", "forecast", "betting", "odds"
+]
+
+# Tags that indicate markets suitable for base rate analysis
+BASE_RATE_FRIENDLY_TAGS = [
+    "frequency", "how often", "historical", "rate of", "chance of",
+    "probability", "likelihood", "typically", "usually", "average"
+]
 
 
 class PolymarketClient:
@@ -272,6 +327,196 @@ class PolymarketClient:
             return market
         except Exception:
             return None
+
+    def classify_market_category(self, market_data: dict) -> list[str]:
+        """
+        Classify a market into categories based on its content.
+
+        Args:
+            market_data: Raw market data from API
+
+        Returns:
+            List of matching category names
+        """
+        # Combine all text for matching
+        question = market_data.get("question", "").lower()
+        description = market_data.get("description", "").lower()
+        tags = market_data.get("tags", [])
+        group_title = market_data.get("groupItemTitle", "").lower()
+
+        all_text = f"{question} {description} {group_title}"
+        if isinstance(tags, list):
+            all_text += " " + " ".join(str(t).lower() for t in tags)
+
+        matched_categories = []
+        for category, keywords in CATEGORY_MAPPINGS.items():
+            for keyword in keywords:
+                if keyword in all_text:
+                    matched_categories.append(category)
+                    break
+
+        return matched_categories
+
+    def is_base_rate_amenable(self, market_data: dict) -> tuple[bool, str]:
+        """
+        Check if a market is amenable to base rate analysis.
+
+        Returns:
+            Tuple of (is_amenable, reason)
+        """
+        question = market_data.get("question", "").lower()
+        description = market_data.get("description", "").lower()
+
+        # Check for base-rate-friendly patterns
+        for tag in BASE_RATE_FRIENDLY_TAGS:
+            if tag in question or tag in description:
+                return True, f"Contains base-rate-friendly term: {tag}"
+
+        # Check for patterns that suggest historical reference class
+        historical_patterns = [
+            r"how many times",
+            r"how often",
+            r"frequency of",
+            r"rate of",
+            r"\d+ or more",
+            r"at least \d+",
+            r"more than \d+",
+            r"exceed \d+",
+        ]
+        for pattern in historical_patterns:
+            if re.search(pattern, question) or re.search(pattern, description):
+                return True, f"Contains historical pattern: {pattern}"
+
+        # Markets with clear quantitative thresholds are often base-rate-amenable
+        quantitative_patterns = [
+            r"\$[\d,]+",  # Dollar amounts
+            r"\d+%",  # Percentages
+            r"\d+ degrees",  # Temperature
+            r"\d+ inches",  # Measurements
+        ]
+        for pattern in quantitative_patterns:
+            if re.search(pattern, question) or re.search(pattern, description):
+                return True, f"Contains quantitative threshold: {pattern}"
+
+        # Check for non-base-rate patterns (e.g., "who will win")
+        non_br_patterns = [
+            r"who will (win|be|become)",
+            r"which (team|player|candidate)",
+            r"what will .+ (say|do|announce)",
+        ]
+        for pattern in non_br_patterns:
+            if re.search(pattern, question):
+                return False, f"Contains non-base-rate pattern: {pattern}"
+
+        # Default: might be amenable, needs review
+        return True, "No clear indicators, may need manual review"
+
+    def get_markets_by_category(
+        self,
+        categories: list[str],
+        active: bool = True,
+        min_liquidity: float = 0,
+        limit: int = 50,
+        base_rate_only: bool = False
+    ) -> list[Market]:
+        """
+        Fetch markets filtered by category.
+
+        Args:
+            categories: List of category names to filter by
+            active: Only active markets
+            min_liquidity: Minimum liquidity threshold
+            limit: Maximum number of markets to return
+            base_rate_only: Only return markets amenable to base rate analysis
+
+        Returns:
+            List of Market objects matching the criteria
+        """
+        # Normalize categories to lowercase
+        categories = [c.lower() for c in categories]
+
+        # Fetch more markets than needed for filtering
+        raw_markets = self.get_markets(active=active, limit=limit * 5)
+
+        markets = []
+        for raw in raw_markets:
+            # Check liquidity
+            liquidity = float(raw.get("liquidity", 0) or 0)
+            if liquidity < min_liquidity:
+                continue
+
+            # Check category match
+            market_categories = self.classify_market_category(raw)
+            if not any(cat in categories for cat in market_categories):
+                # Also check if any category is a substring match
+                all_cat_text = " ".join(market_categories)
+                if not any(cat in all_cat_text for cat in categories):
+                    continue
+
+            # Check base rate amenability if requested
+            if base_rate_only:
+                is_amenable, _ = self.is_base_rate_amenable(raw)
+                if not is_amenable:
+                    continue
+
+            market = self.parse_market(raw)
+            # Store the detected categories
+            market.tags = market_categories
+            markets.append(market)
+
+            if len(markets) >= limit:
+                break
+
+        return markets
+
+    def get_markets_by_tags(
+        self,
+        tags: list[str],
+        active: bool = True,
+        limit: int = 50
+    ) -> list[Market]:
+        """
+        Fetch markets by Polymarket's native tags.
+
+        Args:
+            tags: List of tags to search for
+            active: Only active markets
+            limit: Maximum number of markets
+
+        Returns:
+            List of matching markets
+        """
+        tags_lower = [t.lower() for t in tags]
+        raw_markets = self.get_markets(active=active, limit=limit * 3)
+
+        markets = []
+        for raw in raw_markets:
+            market_tags = raw.get("tags", [])
+            if isinstance(market_tags, list):
+                market_tags_lower = [str(t).lower() for t in market_tags]
+                if any(tag in market_tags_lower for tag in tags_lower):
+                    markets.append(self.parse_market(raw))
+                    if len(markets) >= limit:
+                        break
+
+        return markets
+
+    def get_available_categories(self) -> dict[str, int]:
+        """
+        Get a count of markets in each category.
+
+        Returns:
+            Dict mapping category name to market count
+        """
+        raw_markets = self.get_markets(active=True, limit=500)
+
+        category_counts = {}
+        for raw in raw_markets:
+            categories = self.classify_market_category(raw)
+            for cat in categories:
+                category_counts[cat] = category_counts.get(cat, 0) + 1
+
+        return dict(sorted(category_counts.items(), key=lambda x: x[1], reverse=True))
 
     def close(self):
         """Close the HTTP client."""

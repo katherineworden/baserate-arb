@@ -180,6 +180,7 @@ class Market:
     volume: float = 0
     liquidity: float = 0
     url: str = ""
+    tags: list[str] = field(default_factory=list)  # Category tags for filtering
     last_updated: datetime = field(default_factory=datetime.utcnow)
 
     def fair_probability(self) -> Optional[float]:
@@ -281,6 +282,7 @@ class Market:
             "volume": self.volume,
             "liquidity": self.liquidity,
             "url": self.url,
+            "tags": self.tags,
             "last_updated": self.last_updated.isoformat(),
             "base_rate": self.base_rate.to_dict() if self.base_rate else None
         }
@@ -304,6 +306,7 @@ class Market:
             volume=data.get("volume", 0),
             liquidity=data.get("liquidity", 0),
             url=data.get("url", ""),
+            tags=data.get("tags", []),
             last_updated=datetime.fromisoformat(data["last_updated"]) if data.get("last_updated") else datetime.utcnow(),
             base_rate=base_rate
         )

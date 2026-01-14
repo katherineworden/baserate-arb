@@ -83,12 +83,14 @@ class BaseRateAgent:
 
     def _execute_web_search(self, query: str) -> str:
         """
-        Execute a web search using a search API.
+        Execute a web search using multiple methods.
 
-        For now, this uses a simple approach. In production, you'd want
-        to use a proper search API (Tavily, Serper, etc.)
+        Tries in order:
+        1. DuckDuckGo instant answers API (for knowledge graph queries)
+        2. DuckDuckGo HTML search (scrape results for general queries)
+        3. Fall back to informing agent to use general knowledge
         """
-        # Try using DuckDuckGo instant answers as a fallback
+        # Method 1: Try DuckDuckGo instant answers API first
         try:
             response = self._http.get(
                 "https://api.duckduckgo.com/",
@@ -114,11 +116,83 @@ class BaseRateAgent:
 
             if results:
                 return "\n".join(results)
-            else:
-                return f"No direct results found for '{query}'. Consider trying a more specific query or using known statistics."
+
+        except Exception:
+            pass  # Try next method
+
+        # Method 2: Scrape DuckDuckGo HTML results
+        try:
+            html_results = self._scrape_duckduckgo_html(query)
+            if html_results:
+                return html_results
+        except Exception:
+            pass
+
+        # Method 3: Fallback message
+        return (
+            f"No search results found for '{query}'. "
+            "Please use your general knowledge to estimate the base rate. "
+            "Consider historical frequencies, analogous events, and reference classes. "
+            "Be explicit about your reasoning and set confidence accordingly."
+        )
+
+    def _scrape_duckduckgo_html(self, query: str) -> Optional[str]:
+        """
+        Scrape DuckDuckGo HTML search results.
+
+        This works better than the instant answer API for research queries.
+        """
+        try:
+            # Use DuckDuckGo HTML interface
+            response = self._http.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": query},
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; baserate-arb/1.0)"
+                },
+                follow_redirects=True
+            )
+
+            if response.status_code != 200:
+                return None
+
+            html = response.text
+
+            # Extract result snippets using regex (avoid heavy parsing dependency)
+            results = []
+
+            # Pattern for result snippets
+            snippet_pattern = r'<a class="result__snippet"[^>]*>([^<]+)</a>'
+            title_pattern = r'<a class="result__a"[^>]*>([^<]+)</a>'
+            url_pattern = r'<a class="result__url"[^>]*href="([^"]+)"'
+
+            snippets = re.findall(snippet_pattern, html)
+            titles = re.findall(title_pattern, html)
+            urls = re.findall(url_pattern, html)
+
+            # Combine results
+            for i in range(min(5, len(snippets))):
+                title = titles[i] if i < len(titles) else "Result"
+                snippet = snippets[i] if i < len(snippets) else ""
+                url = urls[i] if i < len(urls) else ""
+
+                # Clean up HTML entities
+                title = re.sub(r'&[^;]+;', ' ', title).strip()
+                snippet = re.sub(r'&[^;]+;', ' ', snippet).strip()
+
+                if snippet:
+                    results.append(f"[{title}]\n{snippet}")
+                    if url:
+                        results.append(f"Source: {url}")
+                    results.append("")
+
+            if results:
+                return "\n".join(results)
+
+            return None
 
         except Exception as e:
-            return f"Search failed: {str(e)}. Please estimate based on general knowledge or try a different query."
+            return None
 
     def _process_tool_call(self, tool_name: str, tool_input: dict) -> tuple[str, Optional[BaseRate]]:
         """Process a tool call and return result."""

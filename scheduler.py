@@ -48,9 +48,9 @@ def scan_and_trade():
     try:
         # Initialize
         client = KalshiClient()
-        analyzer = MarketAnalyzer()
-        trader = PaperTrader()
         storage = MarketStorage()
+        analyzer = MarketAnalyzer(storage)
+        trader = PaperTrader()
 
         # Fetch markets
         markets = client.fetch_markets_with_books(limit=50)

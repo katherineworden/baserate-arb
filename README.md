@@ -213,6 +213,73 @@ src/
 4. **Market prices may be right** - The market might know something the base rate doesn't
 5. **Liquidity matters** - Small markets may not have enough depth to trade
 
+## Automated Trading (Scheduler)
+
+Run the bot automatically on a server:
+
+```bash
+# Run scheduler (scans hourly, auto-researches, paper trades)
+python scheduler.py
+
+# Run once and exit
+python scheduler.py --once
+
+# Generate report only
+python scheduler.py --report daily
+```
+
+### CLI Runner
+
+```bash
+# Check system status
+python run_trader.py status
+
+# Scan for opportunities
+python run_trader.py scan --platform kalshi --limit 30
+
+# Paper trading
+python run_trader.py paper status
+python run_trader.py paper reset --balance 1000
+
+# Generate performance report
+python run_trader.py report --period weekly --email
+```
+
+### Paper Trading
+
+The bot includes a paper trading system to test strategies without real money:
+- Tracks virtual balance, positions, P&L
+- Simulates market resolution
+- Generates daily/weekly reports
+- Data persists in `data/paper_trading/`
+
+### Email Reports
+
+Configure in `.env`:
+```
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+REPORT_EMAIL=your-email@gmail.com
+```
+
+Reports are sent daily at midnight UTC and weekly on Mondays.
+
+## Deployment
+
+See [DEPLOY.md](DEPLOY.md) for DigitalOcean deployment instructions.
+
+Quick start:
+```bash
+# On your server
+git clone https://github.com/katherineworden/baserate-arb.git
+cd baserate-arb
+cp .env.example .env
+# Edit .env with your API keys
+nohup python3 scheduler.py > baserate.log 2>&1 &
+```
+
 ## Testing
 
 ```bash

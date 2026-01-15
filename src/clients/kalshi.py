@@ -3,6 +3,7 @@
 import hashlib
 import base64
 import time
+import os
 from datetime import datetime
 from typing import Optional
 from pathlib import Path
@@ -24,10 +25,21 @@ class KalshiClient:
     def __init__(
         self,
         api_key: Optional[str] = None,
+        private_key: Optional[str] = None,
         private_key_path: Optional[str] = None,
         use_demo: bool = False
     ):
-        self.api_key = api_key
+        """
+        Initialize Kalshi client.
+
+        Args:
+            api_key: Kalshi API key (or set KALSHI_API_KEY env var)
+            private_key: RSA private key string (or set KALSHI_PRIVATE_KEY env var)
+            private_key_path: Path to RSA private key file
+            use_demo: Use demo API instead of production
+        """
+        self.api_key = api_key or os.getenv("KALSHI_API_KEY")
+        self.private_key = private_key or os.getenv("KALSHI_PRIVATE_KEY")
         self.private_key_path = private_key_path
         self.base_url = self.DEMO_URL if use_demo else self.BASE_URL
         self._client = httpx.Client(timeout=30.0)
@@ -36,11 +48,16 @@ class KalshiClient:
 
     def _load_private_key(self) -> Optional[bytes]:
         """Load private key for authentication."""
-        if not self.private_key_path:
-            return None
-        path = Path(self.private_key_path)
-        if path.exists():
-            return path.read_bytes()
+        # First try direct private key string (from env var)
+        if self.private_key:
+            return self.private_key.encode() if isinstance(self.private_key, str) else self.private_key
+
+        # Then try file path
+        if self.private_key_path:
+            path = Path(self.private_key_path)
+            if path.exists():
+                return path.read_bytes()
+
         return None
 
     def _sign_request(self, timestamp: int, method: str, path: str) -> str:
@@ -78,7 +95,9 @@ class KalshiClient:
             "Content-Type": "application/json"
         }
 
-        if self.api_key and self.private_key_path:
+        # Check if we have credentials for signing
+        has_key = self.api_key and (self.private_key or self.private_key_path)
+        if has_key:
             timestamp = int(time.time() * 1000)
             signature = self._sign_request(timestamp, method, path)
             if signature:

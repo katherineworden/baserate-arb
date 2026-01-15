@@ -1,0 +1,21 @@
+{
+  "period": "weekly",
+  "start_date": "2026-01-08T21:15:48.577092",
+  "end_date": "2026-01-15T21:15:48.577092",
+  "starting_balance": 1000.0,
+  "ending_balance": 1000.0,
+  "net_pnl": 0,
+  "roi_percent": 0.0,
+  "total_trades": 0,
+  "winning_trades": 0,
+  "losing_trades": 0,
+  "win_rate": 0,
+  "open_positions": 0,
+  "unrealized_pnl": 0,
+  "best_trade_pnl": 0,
+  "best_trade_market": "N/A",
+  "worst_trade_pnl": 0,
+  "worst_trade_market": "N/A",
+  "avg_edge_taken": 0,
+  "avg_kelly_used": 0
+}

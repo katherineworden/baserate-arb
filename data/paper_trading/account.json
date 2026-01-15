@@ -1,0 +1,9 @@
+{
+  "initial_balance": 1000.0,
+  "balance": 1000.0,
+  "total_trades": 0,
+  "winning_trades": 0,
+  "total_pnl": 0,
+  "positions": [],
+  "closed_positions": []
+}

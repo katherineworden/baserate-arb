@@ -32,7 +32,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from dotenv import load_dotenv
-load_dotenv()
+# Load .env from the script's directory
+env_path = Path(__file__).parent / ".env"
+load_dotenv(env_path)
 
 
 def cmd_scan(args):
@@ -172,6 +174,25 @@ def cmd_live(args):
     print(f"Current positions: {len(positions)}")
 
 
+def cmd_report(args):
+    """Generate performance report."""
+    from src.trading.reports import ReportGenerator, generate_email_summary
+
+    generator = ReportGenerator()
+    report = generator.generate_report(period=args.period, save=args.save)
+
+    if not report:
+        print("\n⚠️  No paper trading data found. Start paper trading first!")
+        return
+
+    print("\n" + report.to_text())
+
+    if args.email:
+        print("\n" + "=" * 50)
+        print("📧 EMAIL FORMAT:")
+        print(generate_email_summary(report))
+
+
 def cmd_status(args):
     """Quick status check."""
     from src.trading.paper_trader import PaperTrader
@@ -192,7 +213,7 @@ def cmd_status(args):
 
     # Storage status
     storage = MarketStorage()
-    markets = storage.list_markets()
+    markets = list(storage._markets.values())
     markets_with_rates = [m for m in markets if m.base_rate]
     print(f"\n📚 Research:")
     print(f"   Markets tracked: {len(markets)}")
@@ -238,6 +259,13 @@ def main():
     # Status command
     status_parser = subparsers.add_parser("status", help="Check system status")
 
+    # Report command
+    report_parser = subparsers.add_parser("report", help="Generate performance report")
+    report_parser.add_argument("--period", choices=["daily", "weekly", "monthly", "all_time"], default="weekly")
+    report_parser.add_argument("--save", action="store_true", default=True, help="Save report to disk")
+    report_parser.add_argument("--no-save", dest="save", action="store_false")
+    report_parser.add_argument("--email", action="store_true", help="Include email-friendly format")
+
     args = parser.parse_args()
 
     if args.command == "scan":
@@ -248,6 +276,8 @@ def main():
         cmd_live(args)
     elif args.command == "status":
         cmd_status(args)
+    elif args.command == "report":
+        cmd_report(args)
     else:
         parser.print_help()
 

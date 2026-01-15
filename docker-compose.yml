@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  baserate-arb:
+    build: .
+    container_name: baserate-arb
+    restart: unless-stopped
+    environment:
+      # API Keys (set these in .env or pass via docker-compose)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - KALSHI_API_KEY=${KALSHI_API_KEY}
+      - KALSHI_PRIVATE_KEY=${KALSHI_PRIVATE_KEY}
+
+      # Trading config
+      - SCAN_INTERVAL_MINUTES=60  # How often to scan (default: hourly)
+      - PAPER_TRADING=true        # Set to 'false' for live trading
+
+      # Optional: Email reports
+      # - SMTP_HOST=smtp.gmail.com
+      # - SMTP_PORT=587
+      # - SMTP_USER=your@email.com
+      # - SMTP_PASS=your-app-password
+      # - REPORT_EMAIL=your@email.com
+    volumes:
+      # Persist trading data
+      - ./data:/app/data
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('data') else 1)"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+
+  # Optional: Web UI for monitoring
+  web:
+    build: .
+    container_name: baserate-web
+    command: python -m src.web.app
+    ports:
+      - "5000:5000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - KALSHI_API_KEY=${KALSHI_API_KEY}
+      - KALSHI_PRIVATE_KEY=${KALSHI_PRIVATE_KEY}
+    volumes:
+      - ./data:/app/data
+    profiles:
+      - web  # Only start with: docker-compose --profile web up

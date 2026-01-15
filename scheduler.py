@@ -36,11 +36,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def research_base_rates(markets, storage):
-    """Use LLM agent to research base rates for markets."""
+def research_base_rates(markets, storage, max_per_scan: int = 3):
+    """
+    Use LLM agent to research base rates for markets.
+
+    Rate limiting to protect API credits:
+    - Default max 3 markets per scan (hourly)
+    - ~$0.03 per market = ~$0.09/hour = ~$2.16/day
+    - With $50 credits, this lasts ~23 days
+    """
     from src.agents.base_rate_agent import BaseRateAgent
 
-    logger.info(f"Researching base rates for {len(markets)} markets...")
+    # Rate limit to protect credits
+    markets = markets[:max_per_scan]
+    logger.info(f"Researching base rates for {len(markets)} markets (rate limited to {max_per_scan}/scan)...")
 
     try:
         api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -60,6 +69,9 @@ def research_base_rates(markets, storage):
                     logger.info(f"  -> Found base rate: {base_rate.rate:.1%} ({base_rate.unit.value})")
                 else:
                     logger.info(f"  -> No base rate found")
+
+                # Small delay between API calls
+                time.sleep(2)
 
             except Exception as e:
                 logger.warning(f"  -> Research failed: {e}")

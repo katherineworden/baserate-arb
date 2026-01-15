@@ -36,6 +36,35 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def research_base_rates(markets, storage):
+    """Use LLM agent to research base rates for markets."""
+    from src.agents.base_rate_agent import BaseRateAgent
+
+    logger.info(f"Researching base rates for {len(markets)} markets...")
+
+    try:
+        agent = BaseRateAgent()
+
+        for market in markets:
+            try:
+                logger.info(f"Researching: {market.title[:60]}...")
+                base_rate = agent.research_base_rate(market)
+
+                if base_rate:
+                    market.base_rate = base_rate
+                    storage.save_market(market)
+                    logger.info(f"  -> Found base rate: {base_rate.rate:.1%} ({base_rate.unit.value})")
+                else:
+                    logger.info(f"  -> No base rate found")
+
+            except Exception as e:
+                logger.warning(f"  -> Research failed: {e}")
+                continue
+
+    except Exception as e:
+        logger.error(f"Base rate research failed: {e}")
+
+
 def scan_and_trade():
     """Scan markets and execute paper trades."""
     from src.clients.kalshi import KalshiClient
@@ -66,8 +95,20 @@ def scan_and_trade():
         markets_with_rates = [m for m in markets if m.base_rate]
         logger.info(f"Markets with base rates: {len(markets_with_rates)}")
 
+        # Auto-research base rates for markets that don't have them
+        markets_without_rates = [m for m in markets if not m.base_rate]
+        if markets_without_rates and os.getenv("ANTHROPIC_API_KEY"):
+            research_base_rates(markets_without_rates[:5], storage)  # Research up to 5 per scan
+            # Reload markets with new base rates
+            for market in markets:
+                stored = storage.get_market(market.id)
+                if stored and stored.base_rate:
+                    market.base_rate = stored.base_rate
+            markets_with_rates = [m for m in markets if m.base_rate]
+            logger.info(f"Markets with base rates after research: {len(markets_with_rates)}")
+
         if not markets_with_rates:
-            logger.info("No markets with base rates. Run base rate research first.")
+            logger.info("No markets with base rates yet. Will research more next scan.")
             return
 
         # Find opportunities

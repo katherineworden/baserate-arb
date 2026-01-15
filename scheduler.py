@@ -43,7 +43,11 @@ def research_base_rates(markets, storage):
     logger.info(f"Researching base rates for {len(markets)} markets...")
 
     try:
-        agent = BaseRateAgent()
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            logger.warning("No ANTHROPIC_API_KEY set, skipping research")
+            return
+        agent = BaseRateAgent(api_key=api_key)
 
         for market in markets:
             try:

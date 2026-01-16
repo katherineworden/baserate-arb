@@ -211,16 +211,60 @@ class CombinedScanner:
 
             storage = MarketStorage()
 
-            # Fetch markets (returns Market objects)
-            markets = self.kalshi_client.fetch_markets_with_books(limit=limit)
-            logger.info(f"Fetched {len(markets)} markets from Kalshi")
+            # Fetch markets from events (more diverse categories)
+            # First try to get events which include politics, entertainment, etc.
+            try:
+                events_result = self.kalshi_client.get_events(limit=limit)
+                events = events_result.get('events', [])
+                logger.info(f"Found {len(events)} events")
 
-            # Filter to markets without base rates
+                # Get markets from diverse events (skip sports-heavy ones)
+                markets = []
+                for event in events:
+                    event_ticker = event.get('event_ticker', '')
+                    series = event.get('series_ticker', '').upper()
+
+                    # Skip sports events
+                    if any(x in series for x in ['SPORT', 'NFL', 'NBA', 'MLB', 'NHL', 'SINGLEGAME', 'MULTIGAME']):
+                        continue
+
+                    # Fetch markets for this event
+                    try:
+                        event_markets = self.kalshi_client.fetch_markets_with_books(
+                            event_ticker=event_ticker,
+                            limit=5
+                        )
+                        markets.extend(event_markets)
+                        if len(markets) >= limit:
+                            break
+                    except:
+                        pass
+
+                logger.info(f"Fetched {len(markets)} non-sports markets from events")
+            except Exception as e:
+                logger.warning(f"Could not fetch from events: {e}, falling back to regular markets")
+                markets = self.kalshi_client.fetch_markets_with_books(limit=limit)
+                logger.info(f"Fetched {len(markets)} markets from Kalshi")
+
+            # Filter to markets without base rates, prioritizing non-sports markets
             markets_needing_research = []
+            sports_markets = []
+
             for market in markets:
                 existing = storage.get_base_rate(market.id)
                 if not existing:
-                    markets_needing_research.append(market)
+                    # Check if it's a sports parlay (these are less interesting for base rates)
+                    is_sports = any(x in market.id.upper() for x in ['SPORT', 'NFL', 'NBA', 'MLB', 'NHL', 'SINGLEGAME', 'MULTIGAME'])
+                    if is_sports:
+                        sports_markets.append(market)
+                    else:
+                        markets_needing_research.append(market)
+
+            # Add sports markets at the end (lower priority)
+            markets_needing_research.extend(sports_markets)
+
+            non_sports_count = len(markets_needing_research) - len(sports_markets)
+            logger.info(f"{len(markets_needing_research)} markets need research ({non_sports_count} non-sports, {len(sports_markets)} sports)")
 
             logger.info(f"{len(markets_needing_research)} markets need base rate research")
 

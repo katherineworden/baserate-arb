@@ -126,8 +126,8 @@ class CombinedScanner:
     def kalshi_client(self):
         """Lazy-load Kalshi client for base rate system."""
         if self._kalshi_client is None:
-            from src.clients.kalshi import KalshiClient
-            self._kalshi_client = KalshiClient()
+            from src.clients.kalshi import KalshiClient as SrcKalshiClient
+            self._kalshi_client = SrcKalshiClient()
         return self._kalshi_client
 
     @property
@@ -211,8 +211,8 @@ class CombinedScanner:
 
             storage = MarketStorage()
 
-            # Fetch markets
-            markets = self.kalshi_client.get_markets(limit=limit)
+            # Fetch markets (returns Market objects)
+            markets = self.kalshi_client.fetch_markets_with_books(limit=limit)
             logger.info(f"Fetched {len(markets)} markets from Kalshi")
 
             # Filter to markets without base rates

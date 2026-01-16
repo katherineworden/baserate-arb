@@ -226,7 +226,11 @@ class CombinedScanner:
 
             # Research top N markets (this costs API credits)
             if markets_needing_research and research_limit > 0:
-                agent = BaseRateAgent()
+                api_key = os.getenv('ANTHROPIC_API_KEY')
+                if not api_key:
+                    logger.error("ANTHROPIC_API_KEY not set, skipping base rate research")
+                    return 0, []
+                agent = BaseRateAgent(api_key=api_key)
                 researched = 0
 
                 for market in markets_needing_research[:research_limit]:

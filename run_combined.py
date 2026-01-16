@@ -206,10 +206,10 @@ class CombinedScanner:
         self.stats['last_baserate_scan'] = datetime.now().isoformat()
 
         try:
-            from src.storage import Storage
+            from src.storage import MarketStorage
             from src.agents.base_rate_agent import BaseRateAgent
 
-            storage = Storage()
+            storage = MarketStorage()
 
             # Fetch markets
             markets = self.kalshi_client.get_markets(limit=limit)
@@ -235,7 +235,7 @@ class CombinedScanner:
                         base_rate = agent.research_base_rate(market)
 
                         if base_rate:
-                            storage.save_base_rate(base_rate)
+                            storage.save_base_rate(market.id, base_rate)
                             market.base_rate = base_rate
                             researched += 1
                             logger.info(f"  -> Rate: {base_rate.rate:.2%} ({base_rate.unit}), confidence: {base_rate.confidence:.0%}")

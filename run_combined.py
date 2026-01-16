@@ -23,6 +23,9 @@ import time
 import json
 import logging
 import argparse
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
@@ -384,6 +387,45 @@ class CombinedScanner:
 
         return "\n".join(report)
 
+    def send_email_report(self, report: str, subject: str = None):
+        """Send report via email if SMTP is configured."""
+        smtp_host = os.getenv('SMTP_HOST')
+        smtp_port = int(os.getenv('SMTP_PORT', '587'))
+        smtp_user = os.getenv('SMTP_USER')
+        smtp_pass = os.getenv('SMTP_PASS')
+        report_email = os.getenv('REPORT_EMAIL')
+
+        if not all([smtp_host, smtp_user, smtp_pass, report_email]):
+            logger.debug("Email not configured, skipping email report")
+            return False
+
+        try:
+            if subject is None:
+                subject = f"Arbitrage Scanner Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+            msg = MIMEMultipart()
+            msg['From'] = smtp_user
+            msg['To'] = report_email
+            msg['Subject'] = subject
+
+            # Add summary stats to subject if there are opportunities
+            if self.stats['instant_opportunities'] > 0 or self.stats['baserate_opportunities'] > 0:
+                msg['Subject'] = f"[{self.stats['instant_opportunities']} opps] " + subject
+
+            msg.attach(MIMEText(report, 'plain'))
+
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+
+            logger.info(f"Email report sent to {report_email}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to send email report: {e}")
+            return False
+
     def run_once(self, instant: bool = True, baserate: bool = True):
         """Run a single scan of specified systems."""
         logger.info("Running single scan...")
@@ -441,6 +483,9 @@ class CombinedScanner:
                     report_file = f'data/report_{datetime.now().strftime("%Y%m%d")}.txt'
                     with open(report_file, 'w') as f:
                         f.write(report)
+
+                    # Send email report
+                    self.send_email_report(report, subject="Daily Arbitrage Scanner Report")
 
                     last_report = now
 
